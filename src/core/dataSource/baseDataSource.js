@@ -88,7 +88,7 @@ const functions = {
                 keyLookup.set(keyStr, row.key);
                 valueLookup = getMapFromMap(keyValueLookup, keyStr);
                 valueLookup.set(row.value, row);    
-            };
+            }
         });
 
         return {

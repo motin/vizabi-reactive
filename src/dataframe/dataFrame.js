@@ -52,7 +52,7 @@ function constructDataFrame(storage) {
             extent: (concept) => extent(df, concept),
             unique: (concept) => unique(df, concept),
         
-            // export
+            // export - TODO: toArray
             toJSON: () => [...df.values()]
         },
         {

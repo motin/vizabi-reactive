@@ -19,7 +19,6 @@ const defaults = {
     concept: undefined,
     space: null,
     value: null,
-    filter: null,
     locale: null,
     source: null,
     domain: [0, 1],
@@ -73,6 +72,10 @@ export function dataConfig(config = {}, parent) {
             else
                 return (this.parent.marker) ? this.parent.marker.data.locale : null;          
         },
+        /**
+         * TODO: Should be parentConcept
+         * @returns {*}
+         */
         get concept() { 
             return (this.parent.marker.data.configSolution.encodings || {})[this.parent.name];
             // return this.config.concept ? resolveRef(this.config.concept) : defaults.concept; 
