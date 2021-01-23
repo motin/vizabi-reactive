@@ -92,12 +92,31 @@ export function dataConfig(config = {}, parent) {
             return source;
         },
         get domainData() {
+            const now = Date.now();
+            console.log(`get domainData start`);
             const source = this.domainDataSource;
-            const data = source === 'self' ? this.responseMap
-                : this.parent.marker.transformedDataMaps.has(source) ? this.parent.marker.transformedDataMaps.get(source).get()
-                : source === 'markers' ? this.parent.marker.dataMap  
-                : this.responseMap;
+            console.log(`get domainData until after this.domainDataSource took ${Date.now() - now}ms`);
 
+            let data;
+            if (source === 'self') {
+                data = this.responseMap;
+                console.log(`get domainData until after this.responseMap took ${Date.now() - now}ms`);
+            } else {
+                if (this.parent.marker.transformedDataMaps.has(source)) {
+                    console.log(`get domainData until after this.parent.marker.transformedDataMaps.has(source) took ${Date.now() - now}ms`);
+                    data = this.parent.marker.transformedDataMaps.get(source).get();
+                    console.log(`get domainData until after this.parent.marker.transformedDataMaps.get(source).get() took ${Date.now() - now}ms`);
+                } else {
+                    if (source === 'markers') {
+                        data = this.parent.marker.dataMap;
+                        console.log(`get domainData until after this.parent.marker.dataMap took ${Date.now() - now}ms`);
+                    } else {
+                        data = this.responseMap;
+                    }
+                }
+            }
+
+            console.log(`get domainData took ${Date.now() - now}ms - data size: ${data.size}`);
             return data;
         },
         get domain() {
@@ -107,12 +126,21 @@ export function dataConfig(config = {}, parent) {
 
             return this.calcDomain(this.domainData, this.conceptProps);
         },
-        calcDomain(data, { concept, concept_type }) { 
+        calcDomain(data, { concept, concept_type }) {
+            const now = Date.now();
+            console.log(`get calcDomain start`);
             // use rows api implemented by both group and df
-            if (["measure","time"].includes(concept_type)) // continuous
-                return extent(data.rows(), concept);
-            else // ordinal (entity_set, entity_domain, string)
-                return unique(data.rows(), concept); 
+            if (["measure","time"].includes(concept_type)) {
+                const r = extent(data.rows(), concept);
+                console.log(`get calcDomain took ${Date.now() - now}ms - data size: ${data.size}`);
+                return r;
+            }
+
+            else {
+                const r = unique(data.rows(), concept);
+                console.log(`get calcDomain took ${Date.now() - now}ms - data size: ${data.size}`);
+                return r;
+            }
         },
 
 
@@ -222,12 +250,15 @@ export function dataConfig(config = {}, parent) {
         },
         get response() {
             trace();
+            const now = Date.now();
+            console.log(`get response start. this.source, this.concept, this.conceptInSpace:`, this.source, this.concept, this.conceptInSpace);
             if (!this.source || !this.concept || this.conceptInSpace) {
                 if (this.conceptInSpace)
                     console.warn("Encoding " + this.parent.name + " was asked for data but it has no own data. Reason: Concept in space.");
                 else
                     console.warn("Encoding " + this.parent.name + " was asked for data but it has no own data.");
             }
+            console.log(`get response took ${Date.now() - now}ms - latestResponse length: ${latestResponse.length}`);
             return this.promise.case({
                 pending: () => latestResponse,
                 rejected: e => latestResponse,
@@ -236,6 +267,7 @@ export function dataConfig(config = {}, parent) {
         },
         get responseMap() {
             trace();
+            console.log("##### get responseMap", this.response);
             if (isDataFrame(this.response))
                 return this.response;
             else

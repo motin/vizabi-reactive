@@ -7,7 +7,10 @@ import { createMarkerKey } from '../../dataframe/utils';
 import { configurable } from '../configurable';
 import { fullJoin } from '../../dataframe/transforms/fulljoin';
 import { DataFrame } from '../../dataframe/dataFrame';
+import {fromPromise} from "mobx-utils";
 
+let dataMapCacheExternallyHydrated = null;
+let dataExternallyHydrated = null;
 
 const defaultConfig = {
     data: {
@@ -59,6 +62,9 @@ let functions = {
         return this.eventListeners.get(prop);
     },
     get data() {
+        if (this.useExternallyHydratedValues) {
+            return dataExternallyHydrated;
+        }
         return dataConfigStore.getByDefinition(this.config.data, this)
     },
     get requiredEncodings() { return this.config.requiredEncodings || defaults.requiredEncodings },
@@ -81,6 +87,53 @@ let functions = {
         }
     },
     get state() {
+        // temporary switches to switch on and off use of ext/int hydrated states during exploration
+        const useExt = false;
+        const useInt = true;
+        if (useExt) {
+            console.log("state this.stateExternallyHydratedPromise", this.stateExternallyHydratedPromise);
+            if (this.stateExternallyHydratedPromise.state === "fulfilled") {
+                return "fulfilled";
+            }
+        }
+        if (useInt) {
+            console.log("state this.stateInternallyHydrated", this.stateInternallyHydrated);
+            if (this.stateInternallyHydrated === "fulfilled") {
+                return "fulfilled";
+            }
+        }
+        return "pending";
+    },
+    get stateExternallyHydratedPromise() {
+        return fromPromise(new Promise((resolve) => {
+            // TODO: make the filename include relevant identifiers so that the marker can request the correct file
+            fetch('http://localhost:4200/tools/assets/markerState.json.gz')
+              .then(response => {
+                  console.log("Externally fetched markerState initial stream available")
+                  return response.arrayBuffer();
+              })
+              .then(gzippedMarkerState => {
+                  console.log("Externally fetched state fetched and stored in arrayBuffer")
+                  // note that a proper server setup would have the response gunzipped already by the browser
+                  // as part of using accept-encoding http header, so this gunzipping is not necessary to do in JS
+                  const markerStateJson = pako.inflate(gzippedMarkerState, {to: 'string'});
+                  console.log("Externally fetched state gunzipped");
+                  const markerState = JSON.parse(markerStateJson);
+                  console.log("Externally fetched state parsed");
+                  const dataMap = DataFrame(markerState.dfArray, markerState.data.space);
+                  console.log("Externally fetched state dataMap DataFrame created");
+                  dataMapCacheExternallyHydrated = dataMap;
+                  dataExternallyHydrated = markerState.data;
+                  dataExternallyHydrated.source = markerState.data.source;
+                  dataExternallyHydrated.configSolution = markerState.data.configSolution;
+                  // dataExternallyHydrated.concept = markerState.data.concept;
+                  this.useExternallyHydratedValues = true;
+                  console.log("Externally fetched dataMap resolving state as fulfilled");
+                  resolve();
+              });
+        }));
+    },
+    get stateInternallyHydrated() {
         trace();
         const encodingStates= [...this.encoding.values()].map(enc => enc.data.state);
         const states = [this.data.source.state, ...encodingStates];
@@ -105,11 +158,21 @@ let functions = {
         return items;
     },
     // computed to cache calculation
+    useExternallyHydratedValues: false,
     get dataMapCache() {
         trace();
+
+        if (this.useExternallyHydratedValues) {
+            return dataMapCacheExternallyHydrated;
+        }
+
         // prevent recalculating on each encoding data coming in
         if (this.state !== "fulfilled") 
             return DataFrame([], this.data.space);
+
+        const now = Date.now();
+        console.log(`get dataMapCache start (with this.state fulfilled)`);
+        // console.profile();
 
         const markerDefiningEncodings = [];
         const markerAmmendingEncodings = [];
@@ -140,19 +203,30 @@ let functions = {
                 markerDefiningEncodings.push(this.joinConfig(encoding, name));    
 
         }
+        console.log(`get dataMapCache checkpoint A took ${Date.now() - now}ms`, {markerDefiningEncodings, markerAmmendingEncodings, spaceEncodings, constantEncodings});
 
+        const space = this.data.space;
         // define markers (full join encoding data)
-        let dataMap = fullJoin(markerDefiningEncodings, this.data.space);
+        console.log(`get dataMapCache checkpoint B1 took ${Date.now() - now}ms`);
+        let dataMap = fullJoin(markerDefiningEncodings, space);
+        console.log(`get dataMapCache checkpoint B2 took ${Date.now() - now}ms`);
         // ammend markers with non-defining data, constants and copies of space
         dataMap = dataMap.leftJoin(markerAmmendingEncodings);
+        console.log(`get dataMapCache checkpoint C took ${Date.now() - now}ms`);
         constantEncodings.forEach(({name, encoding}) => {
             dataMap = dataMap.addColumn(name, encoding.data.constant);
         })
+        console.log(`get dataMapCache checkpoint D took ${Date.now() - now}ms`);
         spaceEncodings.forEach(({name, encoding}) => {
             const concept = encoding.data.concept;
             dataMap = dataMap.addColumn(name, row => row[concept]);
         });
 
+        // console.profileEnd();
+        console.log(`get dataMapCache took ${Date.now() - now}ms - dataMap size: ${dataMap.size}. this.encoding:`, this.encoding, {dataMap}, this, this.data.configSolution);
+        // copy this console output variable/object and paste into ../tools-page/src/assets/markerState.json, then gzip it
+        const markerState = {dfArray: dataMap.toJSON(), data: this.data, source: this.data.source, configSolution: this.data.configSolution /*, concept: this.data.concept */};
+        console.log(JSON.stringify(markerState, null, 2));
         return dataMap;
     },
     joinConfig(encoding, name) {
@@ -229,12 +303,16 @@ let functions = {
     // of previous steps when config of one step changes. However, it uses memory. We might want this more configurable.
     get transformedDataMaps() {
         trace();
+        const now = Date.now();
+        console.log(`get transformedDataMaps start`);
         // returns boxed computed, whose value can be reached by .get()
         // if we'd call .get() in here (returning the value), each change would lead to applying all transformations
         // because transformedDataMaps() would be observering all stepResults
         // would be nice to find a way for transformedDataMaps to just return the value instead of a boxed computed
         const results = new Map();
         let stepResult = observable.box(this.dataMapCache, { deep: false });
+        const now2 = Date.now();
+        console.log(`get transformedDataMaps after dataMapCache is available took ${Date.now() - now}ms`);
         this.transformations.forEach(({name, fn}) => {
             let prevResult = stepResult; // local reference for closure of computed
             stepResult = computed(
@@ -244,6 +322,7 @@ let functions = {
             results.set(name, stepResult);
         });
         results.set('final', stepResult);
+        console.log(`get transformedDataMaps took ${Date.now() - now}ms (of which ${Date.now() - now2}ms after dataMapCache was available) - this.dataMapCache size: ${this.dataMapCache.size}. this.transformations:`, this.transformations);
         return results;
     },
     /**
